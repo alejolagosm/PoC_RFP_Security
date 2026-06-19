@@ -1,0 +1,888 @@
+{% extends "base.html" %}
+{% load display_tags %}
+{% load authorization_tags %}
+{% load humanize %}
+{% load static %}
+
+{% block add_styles %}
+    {{ block.super }}
+    .chosen-container {
+    width: 70% !important;
+    }
+    .editor-toolbar, .editor-statusbar, .editor-preview-side, .CodeMirror {
+    width: 70% !important;
+    }
+    .spinner {
+        border: 4px solid rgba(0, 0, 0, 0.1);
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        border-left-color: #09f;
+      
+        animation: spin 1s ease infinite;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+      
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      #spinnerContainer {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+    }
+    {% comment %} hoal {% endcomment %}
+     .tooltip-inner {
+        max-width: 650px;
+    }
+    .process-timeline-horizontal {
+        margin-top: 20px;
+        margin-left: 10px;
+    }
+    .timeline-row {
+        position: relative;
+        display: flex;
+    }
+    .timeline-step {
+        position: relative;
+        text-align: center;
+        padding: 20px;
+        background-color: #f4f4f4;
+        opacity: 0.5;
+        border-right: 1px solid #ddd;
+        width: 33.3%;
+    }
+    .timeline-step:last-child {
+        border-right: none;
+    }
+    .timeline-step.active {
+        opacity: 1;
+        background-color: #e9ecef;
+    }
+    .timeline-step.danger {
+        opacity: 1;
+        background-color: #e9ecef;
+    }
+    .timeline-step::before {
+        content: '';
+        position: absolute;
+        top: -10px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 20px;
+        height: 20px;
+        background-color: #6c757d;
+        border-radius: 50%;
+    }
+    .timeline-step.active::before {
+        background-color: #28a745;
+    }
+    .timeline-step.danger::before {
+        background-color: #d11d38;
+    }
+    .timeline-content {
+        position: relative;
+        z-index: 1;
+    }
+    .discussion-item {
+        display: block;
+        width: 100%;
+        margin-bottom: 10px;
+    }
+    
+    .discussion-right {
+        align-self: flex-end;
+        text-align: end;
+        background-color: #e6f2ff;
+        border-radius: 10px;
+        padding: 10px;
+        width: 300px;
+        margin-left: auto; /* This will push it to the right */
+    }
+    
+    .discussion-left {
+        align-self: flex-start;
+        background-color: #f0f0f0;
+        border-radius: 10px;
+        padding: 10px;
+        width: 300px;
+        margin-right: auto; /* This will keep it on the left */
+    }
+    .sticky-form {
+        position: sticky;
+        bottom: 0;
+        background-color: white;
+        padding: 15px;
+        border-top: 1px solid #ddd;
+        z-index: 1000;
+    }
+    .modal-header .close {
+        margin-top: -26px;
+    }
+    .modal-header{
+        padding: 8px;
+        background-color:#20a6d8bf;
+        border-button:#20a6d8bf;
+    }
+{% endblock %}
+{% block add_css %}
+    {{ block.super }}
+    <link rel="stylesheet" href="{% static 'easymde/dist/easymde.min.css' %}">
+{% endblock %}
+{% block content %}
+    {{ block.super }}
+    {% include 'dojo/modal/modal_loading.html' %}
+    {% include 'dojo/modal/send_email.html'%}
+    <div class="modal fade" id="confirmModal" tabindex="-1" role="dialog" aria-labelledby="confirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+            <h5 class="modal-title" id="confirmModalLabel"><h3> Action Confirmed <h3></h5>
+            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                <span aria-hidden="true">&times;</span>
+            </button>
+            </div>
+            <div id="id_modal_message" class="modal-body">
+            Are you sure to perform this action?
+            </div>
+            <div class="modal-footer">
+            <input type="button" class="btn btn-secondary" data-dismiss="modal" value="Cancel">
+            <input id="confirmed_action_risk_pending" type="button" class="btn btn-secondary" name="#" value="Confirmed">
+            </div>
+        </div>
+        </div>
+    </div>
+    {% if risk_acceptance.is_expired %}
+        <div class="danger-zone panel panel-danger">
+            <div class="panel-heading">
+                <h3>Expired</h3>
+            </div>
+        </div>
+    {% endif %}
+    {% if edit_mode %}
+        <div class="panel panel-default">
+            <div class="panel-heading tight">
+                <div class="clearfix">
+                    <h3 class="pull-left">
+                        Risk Acceptance</small>
+                    </h3>
+                </div>
+            </div>
+            <br/>
+            <form id="edit_risk_acceptance" enctype="multipart/form-data"  class="form-horizontal" action="{% url 'edit_risk_acceptance' engagement.id risk_acceptance.id %}" method="post">
+                {% csrf_token %}
+                {% if return_url %}
+                    <input type="hidden" name="return_url" value="{{ return_url }}" />
+                {% endif %}
+                {% include "dojo/form_fields.html" with form=risk_acceptance_form %}
+                <div class="form-group">
+                    <div class="col-sm-offset-2 col-sm-10">
+                        <input class="btn" type="submit" value="Save"/>
+                    </div>
+                </div>
+            </form>
+        </div>
+    {% else %}
+        <div class="panel panel-default">
+            <div class="panel-heading tight">
+                <div class="clearfix">
+                    <h3 class="pull-left">
+                        Risk Acceptance <small>added by {{ risk_acceptance.owner.get_full_name }}, Updated {{ risk_acceptance.updated|naturaltime|default_if_none:"" }}, Created {{ risk_acceptance.created|naturaltime|default_if_none:"" }}</small>
+                    </h3>
+
+                    <div class="dropdown pull-right">
+                        <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownMenu1"
+                                data-toggle="dropdown" aria-expanded="true" aria-label="Risk acceptance options">
+                            <span class="fa-solid fa-bars"></span>
+                            <span class="caret"></span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-right" role="menu" aria-labelledby="dropdownMenu1">
+                            {% include 'dojo/snippets/risk_acceptance_actions_snippet.html' %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table-striped table table-condensed table-hover centered">
+                    <tr>
+                        <th>Date</th>
+                        {% if risk_acceptance.long_term_acceptance%}
+                        <th>Recommended reviewers</th>
+                        {% endif %}
+                        <th>Recommended Acceptors</th>
+                        <th>Name</th>
+                        <th>Decision</th>
+                        <th>Long-Term</th>
+                        <th>Expiration</th>
+                        <th>Expiration handled</th>
+                        <th>Findings</th>
+                        <th>Proof</th>
+                        <th>Reactivate
+                            <i class="fa-solid fa-circle-question has-popover" data-trigger="hover" data-content="Reactivate findings when risk acceptance expires?" data-placement="right" data-container="body" data-original-title="" title="">
+                            </i>
+                        </th>
+                        <th>Restart SLA
+                            <i class="fa-solid fa-circle-question has-popover" data-trigger="hover" data-content="Restart SLA for findings when risk acceptance expires?" data-placement="right" data-container="body" data-original-title="" title="">
+                            </i>
+                        </th>
+                        <th>Owner</th>
+                    </tr>
+                    <tr>
+                        <td>{{ risk_acceptance.created|date }}</td>
+                        {% if risk_acceptance.long_term_acceptance %}
+                            <td> 👤 {{risk_acceptance.reviewed_by}}</br></td>
+                        {% endif %}
+                        <td>
+                            {% if risk_acceptance.accepted_by_user %}
+                                {% for accepted_by in risk_acceptance.accepted_by_user%}
+                                👤 {{accepted_by}}</br>
+                                {% endfor %}
+                            {% else %}
+                                Undefined
+                            {% endif %}
+                        </td>
+                        <td>{{ risk_acceptance.name }}</td>
+                        <td>{{ risk_acceptance.get_decision_display|default_if_none:"" }}</td>
+                        <td>{{ risk_acceptance.long_term_acceptance}}
+                        <!-- <td>{{ risk_acceptance.decision_details|default_if_none:""| truncatechars_html:100 }}</td> -->
+                        <td>
+                            {% if risk_acceptance.expiration_date and risk_acceptance|has_object_permission:"Risk_Acceptance_Expire_Date_Edit" %}
+                                <input id="id_expiration_date" type="date" name="expiration_date" value="{{ risk_acceptance.expiration_date|date:'Y-m-d' }}" data-raid="{{ risk_acceptance.id }}"/>
+                            {% else %}
+                                {{ risk_acceptance.expiration_date|date }}
+                            {% endif %}
+                        </td>
+                        <td>{{ risk_acceptance.expiration_date_handled|date }}</td>
+                        <td>{{ risk_acceptance.accepted_findings.count }}</td>
+                        {% if risk_acceptance.filename %}
+                            <td><a rel="noopener noreferrer" href="{% url 'download_risk_acceptance' eng.id risk_acceptance.id %}">{{ risk_acceptance.filename }}</a></td>
+                        {% else %}
+                            <td>No</a></td>
+                        {% endif %}
+                        <td>
+                            {{ risk_acceptance.reactivate_expired }}
+                        </td>
+                        <td>
+                            {{ risk_acceptance.restart_sla_expired }}
+                        </td>
+                        <td>{{ risk_acceptance.owner.get_full_name }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel panel-default table-responsive">
+            {% if RISK_PENDING %}
+                <div class="panel-heading">
+                    <h3>Recommendation</h3>
+                </div>
+                <table class="table table-condensed">
+                    <thead>
+                        <tr>
+                            <th>Recommendation</th>
+                            <th>Details</th>
+                        <tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td width="10%">
+                                {{ risk_acceptance.get_recommendation_display }}
+                            </td>
+                            <td width="40%">
+                                {{ risk_acceptance.recommendation_details|markdown_render }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+            {% else %}
+                <div class="panel-heading">
+                    <h3>Decision & Recommendation</h3>
+                </div>
+                <table class="table table-condensed">
+                    <thead>
+                        <tr>
+                            <th>Recommendation</th>
+                            <th>Details</th>
+                            <th>Decision</th>
+                            <th>Details</th>
+                        <tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td width="10%">
+                                {{ risk_acceptance.get_recommendation_display }}
+                            </td>
+                            <td width="40%">
+                                {{ risk_acceptance.recommendation_details|markdown_render }}
+                            </td>
+                            <td width="10%">
+                                {{ risk_acceptance.get_decision_display }}
+                            </td>
+                            <td width="40%">
+                                {{ risk_acceptance.decision_details|markdown_render }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            {% endif%}
+        </div>
+    {% endif %}
+    <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4>Process <span class="pull-right"><a rel="noopener noreferrer" data-toggle="collapse" href="#vuln_procs"><i
+                        class="glyphicon glyphicon-chevron-up"></i></a></span></h4>
+            </div>
+            <div id="vuln_procs" class="panel-body finding-description collapse in">
+                {% if risk_acceptance.long_term_acceptance %}
+                <div class="container-fluid process-timeline-horizontal">
+                    <div class="row timeline-row">
+                        <div class="col-4 timeline-step {% if risk_acceptance.created %}active{% endif %}">
+                            <div class="timeline-content">
+                                <strong>Created</strong>
+                                <p>
+                                    {{ risk_acceptance.created|date:"d M Y H:i" }}
+                                    <br>
+                                    <strong>By:</strong> {{ risk_acceptance.owner.username}}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-4 timeline-step {% if risk_acceptance.reviewed_date %}active{% endif %}">
+                            <div class="timeline-content">
+                                <strong>Reviewed</strong>
+                                <p>
+                                    {% if risk_acceptance.reviewed_date %}
+                                        {{ risk_acceptance.reviewed_date|date:"d M Y H:i" }}
+                                        <br>
+                                        <strong>By:</strong> {{ risk_acceptance.reviewed_by }}
+                                    {% else %}
+                                        Pending review by Risk team
+                                    {% endif %}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-4 timeline-step {% if risk_acceptance.accepted_date %}active{% endif %}">
+                            <div class="timeline-content">
+                                <strong>Final Status</strong>
+                                <p>
+                                    {% if risk_acceptance.accepted_date %}
+                                        {{ risk_acceptance.accepted_date|date:"d M Y H:i" }}
+                                        <br>
+                                        <strong>By:</strong> {{ finding_exclusion.accepted_by.username }}
+                                        {% for accepted_by in risk_acceptance.accepted_by_user %}
+                                            {{ accepted_by }}{% if not forloop.last %}, {% endif %}
+                                        {% endfor %}
+                                    {% else %}
+                                        Awaiting acceptance by Risk approvers
+                                    {% endif %}
+                                    {{ finding_exclusion.status_updated_at|date:"d M Y H:i" }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    <div id="risk_acceptance" class="panel panel-default table-responsive">
+        <div class="panel-heading tight">
+            <div class="clearfix">
+                <h3 class="pull-left">
+                    Accept all risks 
+                </h3>
+                <div class="dropdown pull-right">
+                    <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownMenu1"
+                            data-toggle="dropdown" aria-expanded="true">
+                        <span class="fa-solid fa-bars"></span>
+                        <span class="caret"></span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-right" role="menu" aria-labelledby="dropdownMenu1">
+                        {% include 'dojo/snippets/risk_pending_actions_snippet.html' %}
+                    </ul>
+                </div>
+                
+            </div>
+    </div>
+        {% if accepted_findings %}
+            <table id="open_findings" class="table table-condensed table-striped">
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    {% if "PRIORITIZATION_MODEL_PRIORITY"|general_settings_get_value:"False" %}
+                    <th>Priority</th>
+                    {% endif %}
+                    {% if "PRIORITIZATION_MODEL_SEVERITY"|general_settings_get_value:"True" %}
+                    <th>Severity</th>
+                    {% endif %}
+                    <th>EPSS Score / Percentile</th>
+                    <th>Vulnerability Id</th>
+                    <th>Name</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    {% if risk_acceptance.long_term_acceptance %}
+                        <th>Reviewed by</th>
+                    {% endif %}
+                    <th>Accepted by</th>
+                    <th>Actions</th>
+                </thead>
+                <tbody>
+                {% for finding in accepted_findings %}
+                    <tr>
+                        <td>
+                            {{finding.id}}
+                        </td>
+                        {% if "PRIORITIZATION_MODEL_PRIORITY"|general_settings_get_value:"False" %}
+                        <td>
+                            <span class="label severity severity-{{ finding|priority_display_status }}">
+                                <i class="no-italics has-popover" font-style="normal" data-toggle="tooltip" data-placement="bottom" data-container="body" title="" href="#"
+                    data-content="{{ finding.priority }}">
+                                {{ finding|priority_display_status }}
+                            </span>
+                        </td>
+                        {% endif %}
+                        {% if "PRIORITIZATION_MODEL_SEVERITY"|general_settings_get_value:"True" %}
+                        <td>
+                          <span class="label severity severity-{{ finding.severity }}">
+                              {{ finding.severity_display }}
+                          </span>
+                        </td>
+                        {% endif %}
+                        <td>
+                            {{ finding.epss_score|format_epss }}
+                            /
+                            {{ finding.epss_percentile|format_epss }}
+                        </td>
+                        <td>
+                            {% for vulnerability_id in finding.vulnerability_ids %}
+                                {% if vulnerability_id|has_vulnerability_url%}
+                                    <a rel="noopener noreferrer" target="_blank" href="{{ vulnerability_id|vulnerability_url }}">
+                                        <i class="fa-solid fa-arrow-up-right-from-square"></i> {{ vulnerability_id }}</a>
+                                {% else %}
+                                    {{ vulnerability_id }}
+                                {% endif %}
+                                {% if not forloop.last %}, {% endif %}
+                            {% endfor %}
+                        </td>
+                        <td><a rel="noopener noreferrer" href="{% url 'view_finding' finding.id %}"
+                               title="{{ finding.title }}">{{ finding.title|truncatechars_html:140 }}</a></td>
+                        <td>{{ finding.date }}</td>
+                        <td>{{ finding|finding_display_status}}</td>
+                        {% if risk_acceptance.long_term_acceptance %}
+                            <td style="white-space: nowrap;">{{ finding|render_risk_acceptance_reviewed_by:risk_acceptance|safe}}</td>
+                        {% endif %}
+                        <td style="white-space: nowrap;">{{ finding|render_risk_acceptance_accepted_by:risk_acceptance|safe}}</td>
+                        <td>
+                            {% if engagement|has_object_permission:"Risk_Acceptance" and engagement|has_risk_acceptance_permission:finding%}
+                            <form method="post">
+                                {% csrf_token %}
+
+                                <input type="hidden" name="risk_accept_finding_id" value="{{ finding.id }}"/>
+                                <input type="hidden" name="remove_finding_id" value="{{ finding.id }}"/>
+
+                                <button id="id_risk_accept_pending" class="btn btn-success btn-sm btn-tf help help-tooltip" type="submit" name="risk_accept_pending" value="Accept" title="Accept Risk">
+                                    <i class="fas fa-check"></i>
+                                </button>
+
+                                <button class="btn btn-sm btn-warning" type="submit" name="risk_accept_decline" value="Reject" title="Reject Risk">
+                                    <i class="fas fa-times"></i>
+                                </button>
+
+                                <button class="btn btn-sm btn-danger" type="submit" name="remove_finding" value="Remove", title="Delete Risk">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+
+                                <input type="hidden" name="risk_accept_finding_id" value="{{ finding.id }}"/>
+                            </form>
+                            {% else %}
+                                Not Authorized
+                            {% endif %}
+                            </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <div class="panel-body">
+                {% include "dojo/paging_snippet.html" with page=accepted_findings page_size=True %}
+            </div>
+        {% else %}
+            <div class="panel-body">
+                <p><b>No findings associated with this Risk Acceptance.</b></p>
+            </div>
+        {% endif %}
+    </div>
+
+    {% if engagement|has_object_permission:"Risk_Acceptance" %}
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3>Accept Additional Findings</h3>
+            </div>
+            <br/>
+            <form method="post" class="form-horizontal">{% csrf_token %}
+                <div class="show_add_findings_form" style="padding: 1em;">
+                    <div class="text-left"><b>Add findings as accepted:</b></div>
+                    {{ add_findings_form.as_p }}
+                </div>
+                <div class="panel-body">
+                    {% include "dojo/paging_snippet.html" with page=add_findings prefix="apage" page_size=True %}
+                </div>
+                <div class="form-group">
+                    <div class="col-sm-offset-2 col-sm-10">
+                        <input class="btn" name="add_findings" type="submit" value="Add Selected Findings"/>
+                    </div>
+                </div>
+            </form>
+        </div>
+    {% endif %}
+
+    <div class="panel panel-default table-responsive">
+        <div class="panel-heading">
+            <h3>Uploaded Proof</h3>
+        </div>
+        <table id="doc" class="tablesorter-bootstrap table table-condensed table-striped">
+            <thead>
+            <tr>
+                <th>Current File</th>
+                <th>Date Added</th>
+                <th>Actions</th>
+            </thead>
+            <tbody>
+            <tr>
+                {% if risk_acceptance.filename %}
+                    <td>
+                        <a rel="noopener noreferrer" href="{% url 'download_risk_acceptance' eng.id risk_acceptance.id %}">{{ risk_acceptance.filename }}</a>
+                    </td>
+                    <td>
+                        {{ Risk_acceptance.created }}
+                    </td>
+                    <td>
+                        {% if engagement|has_object_permission:"Risk_Acceptance" %}
+                            <form id="replace_risk_file" enctype="multipart/form-data" method="post">
+                                {% csrf_token %}
+                                <label style="background-color:#546474 !important" class="btn btn-sm btn-primary">
+                                    Replace File
+                                    <input accept="application/pdf,image/*" id="id_path" name="path" type="file"/>
+                                </label>
+                                <input type="hidden" name="replace_file" value="Replace File"/>
+                            </form>
+                        {% else %}
+                            Not Authorized
+                        {% endif %}
+                    </td>
+                {% else %}
+                    <td>None</td>
+                    <td>None</td>
+                    <td>
+                        {% if engagement|has_object_permission:"Risk_Acceptance" %}
+                            <form id="replace_risk_file" enctype="multipart/form-data" method="post">
+                                {% csrf_token %}
+                                <label style="background-color:#546474 !important" class="btn btn-sm btn-primary">
+                                    Add File
+                                    <input accept="application/pdf,image/*" id="id_path" name="path" type="file"/>
+                                </label>
+                                <input type="hidden" name="replace_file" value="Add File"/>
+                            </form>
+                        {% else %}
+                            Not Authorized
+                        {% endif %}
+                    </td>
+                {% endif %}
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h3>Notes</h3>
+        </div>
+        {% if notes %}
+            <table id="notes" class="tablesorter-bootstrap table table-condensed table-striped">
+                <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Date</th>
+                    <th>Note</th>
+                    <th>Actions</th>
+                </thead>
+                <tbody>
+                {% for note in notes %}
+                    <tr>
+                        <td>
+                            {{ note.author.username }}
+                        </td>
+                        <td>
+                            {{ note.date }}
+                        </td>
+                        <td>
+                            {{ note }}
+                        </td>
+                        <td>
+                            {% if engagement|has_object_permission:"Risk_Acceptance" %}
+                                <form method="post">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="delete_note_id" value="{{ note.id }}"/>
+                                    <input class="btn btn-sm btn-danger" type="submit" name="delete_note"
+                                           value="Delete"/>
+                                </form>
+                            {% else %}
+                                Not Authorized
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-center">No notes saved.</p>
+        {% endif %}
+        <hr/>
+        <form class="form-horizontal" method="post">{% csrf_token %}
+            {% include "dojo/form_fields.html" with form=note_form %}
+            <div class="form-group">
+                <div class="col-sm-offset-2 col-sm-10">
+                    <input class="btn" type="submit" value="Add Note"/>
+                </div>
+            </div>
+        </form>
+    </div>
+{% endblock %}
+
+{% block postscript %}
+    {{ block.super }}
+
+{% if not edit_mode %}
+    <script type="application/javascript" src="{% static "jquery.hotkeys/jquery.hotkeys.js" %}"></script>
+    <script type="text/javascript" nonce="{{request.csp_nonce}}">
+        $(function () {
+            $(document).on('keypress', null, 'e', function () {
+                window.location.assign('{% url 'edit_engagement' eng.id %}');
+            });
+        });
+    </script>
+{% else %}
+    <script type="application/javascript" src="{% static 'easymde/dist/easymde.min.js' %}"></script>
+    <script>
+        $("#edit_risk_acceptance textarea").each(function (index, elem) {
+            if (elem.hasAttribute("required")) {
+                elem.removeAttribute("required");
+                elem.id = "req"
+            }
+
+            var mde = new EasyMDE({
+                spellChecker: false,
+                inputStyle: "contenteditable",
+                element: elem,
+                autofocus: false,
+                forceSync: true,
+                toolbar: ["bold", "italic", "heading", "|",
+                    "quote", "unordered-list", "ordered-list", "|",
+                    "link", "image", "|",
+                    "table", "horizontal-rule", "code", "|",
+                    "guide"
+                ]
+            });
+            mde.render();
+        });
+    </script>
+{% endif %}
+<script type="module">
+    import {MAX_RETRY, RETRY_INTERVAL} from '{% static "dojo/js/settings.js" %}'
+     const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    
+    async function updateRiskAcceptance(data, risk_acceptance_id){
+        try{
+        response = await $.ajax({
+            url: "/api/v2/risk_acceptance/" + risk_acceptance_id + "/",
+            type: "PATCH",
+            headers: { "X-CSRFToken": csrftoken,
+            "Content-Type": "application/json"},
+            retry: MAX_RETRY,
+            retryInterval: RETRY_INTERVAL,
+            data: JSON.stringify(data),
+        })
+        return response
+        }
+        catch(error){
+        console.error("Update Risk_Acceptance errors: ", error)
+        throw error
+        }
+    }
+
+    $(document).ready(function(){
+        $("#id_long_term_acceptance").on('change', function() {
+            if ($(this).val() === 'Yes') {
+                $('#id_expiration_date_path').prop('disabled', false);
+            } else {
+                $('#id_expiration_date_path').prop('disabled', true);
+            }
+        });
+        // Trigger change calendar
+        $("#id_expiration_date").on('change', function() {
+            var expiration_date_ra = $(this).val();
+            var raid = $(this).data('raid')
+            response = updateRiskAcceptance(
+                {"expiration_date": expiration_date_ra},
+                raid
+            ).then(function(response){
+                console.log(response)
+            })
+        });
+        $('#send-email-risk-acceptance-id').on('click', function() {
+            $('#modal_send_email_id').modal('show');
+        });
+    });
+
+     {% include 'dojo/snippets/risk_acceptance_actions_snippet_js.html' %}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/air-datepicker@3.3.5/air-datepicker.min.js"></script>
+<script type="text/javascript">
+    // flow logn risk acceptance
+    $(document).ready(function() {
+        $('#calendar').datepicker({
+            format: 'yyyy-mm-dd',
+            language: 'es',
+            autoclose: true,
+            todayHighlight: true
+        });
+    });
+    $(document).ready(function() {
+        var observer = window.ResizeObserver ? new ResizeObserver(function (entries) {
+            entries.forEach(function (entry) {
+                $(entry.target).DataTable().columns.adjust();
+            });
+        }) : null;
+
+        resizeHandler = function ($table) {
+            if (observer)
+                observer.observe($table[0]);
+        };
+    
+        {% if enable_table_filtering %}
+            setTimeout(function() {
+                var table = $('#findings_table').DataTable({
+                    "paging": false,
+                    "searching": true,
+                    "ordering": true,
+                    "info": false,
+                    scrollCollapse: true,
+                    scrollY: '30vh',
+                    columns: [
+                        { title: '' },
+                        { title: 'ID' },
+                        {% if "PRIORITIZATION_MODEL_PRIORITY"|general_settings_get_value:"True" %}
+                        { title: 'Priority' },
+                        {% endif %}
+                        {% if "PRIORITIZATION_MODEL_SEVERITY"|general_settings_get_value:"True" %}
+                        { title: 'Severity' },
+                        {% endif %}
+                        { title: 'Name' },
+                        { title: 'CWE' },
+                        { title: 'Vulnerability Id' },
+                        { title: 'EPSS Score' },
+                        { title: 'EPSS Precentile' },
+                        { 
+                            title: 'Date', 
+                            render: function(data) {
+                                var date = new Date(data);
+                                var year = date.getFullYear();
+                                var month = (1 + date.getMonth()).toString().padStart(2, '0');
+                                var day = date.getDate().toString().padStart(2, '0');
+
+                                return year + '-' + month + '-' + day;
+                            }
+                        },
+                        { title: 'Active' }
+                    ]
+                });
+                resizeHandler($('#findings_table'));
+            }, 0);
+        {% endif %}
+    });
+</script>
+<script type="module">
+    import {MAX_RETRY, RETRY_INTERVAL} from '{% static "dojo/js/settings.js" %}'
+    const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+async function sendEmail() {
+    const form = document.getElementById('email-form');
+    const submitBtn = document.getElementById('send-email-btn');
+    
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Sending...';
+    
+    const formData = new FormData(form);
+    
+    formData.append('enable_acceptance_risk_for_email', true);
+    formData.append('risk_acceptance_id', {{ risk_acceptance.id }});
+    formData.append('is_async', false);
+    formData.append('template', 'risk_acceptance_request');
+
+    
+    try {
+        const response = await $.ajax({
+            url: "/api/v2/notifications_email/",
+            type: "POST",
+            data: formData,
+            processData: false,
+            contentType: false,
+            headers: { "X-CSRFToken": csrftoken },
+            retry: MAX_RETRY,
+            retryInterval: RETRY_INTERVAL,
+        });
+        return response;
+    } catch (error) {
+        throw error;
+    }
+  }
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function showSuccessMessage(message) {
+    alert('✅ ' + message);
+}
+
+function showErrorMessage(message) {
+    alert('❌ ' + message);
+}
+
+$(document).ready(function() {
+    $('#send-email-btn').on('click', function(event)
+    {
+        event.preventDefault();
+        sendEmail().then(response => {
+            showSuccessMessage('Email sent successfully.');
+            $('#modal_send_email_id').modal('hide');
+        }).catch(error => {
+            showErrorMessage('Failed to send email. Please try again.');
+        }).finally(() => {
+                const submitBtn = document.getElementById('send-email-btn');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'Send Email';
+        });
+    });
+});
+
+$('#modal_send_email_id').on('hidden.bs.modal', function () {
+    $('#recipient-email').val(""); 
+    document.getElementById('email-form').reset();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,468 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Despliegue de DefectDojo en EC2 con RDS'
+
+Parameters:
+  DDDatabaseAdmin:
+    Type: String
+
+  DDDatabasePassword:
+    Type: String
+    NoEcho: true
+
+  DDCredentialAES256Key:
+    Type: String
+    NoEcho: true
+
+  DDSecretKey:
+    Type: String
+    NoEcho: true
+
+  DDAdminUser:
+    Type: String
+    Default: admin
+
+  DDAdminPassword:
+    Type: String
+    NoEcho: true
+
+  EC2SubnetSelector:
+    Type: String
+    Default: '1'
+    AllowedValues:
+      - '1'
+      - '2'
+    Description: Change between 1 and 2 to force recreation of the EC2 instance
+
+  EC2RootVolumeSize:
+    Type: Number
+    Default: 80
+    MinValue: 30
+    Description: Root EBS volume size (GiB) for EC2 instance to support Docker builds
+
+Conditions:
+  UsePublicSubnet1ForEC2: !Equals [!Ref EC2SubnetSelector, '1']
+
+Resources:
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DefectDojoVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  DefectDojoVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DefectDojoVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1a
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DefectDojoVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1b
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DefectDojoVPC
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-EC2Role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-EC2Profile"
+      Roles:
+        - !Ref EC2InstanceRole
+
+  DefectDojoSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for DefectDojo RDS
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      DBSubnetGroupName: !Sub "${AWS::StackName}-subnet-group"
+
+  DefectDojoSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Allow HTTP access to DefectDojo'
+      VpcId: !Ref DefectDojoVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Allow PostgreSQL access from EC2'
+      VpcId: !Ref DefectDojoVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref DefectDojoSecurityGroup
+
+  DefectDojoDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      DBName: defectdojo
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      DBSubnetGroupName: !Ref DefectDojoSubnetGroup
+      MasterUsername: !Ref DDDatabaseAdmin
+      MasterUserPassword: !Ref DDDatabasePassword
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+
+  DefectDojoEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0e1bed4f06a3b463d
+      InstanceType: t3.large
+      SubnetId: !If [UsePublicSubnet1ForEC2, !Ref PublicSubnet1, !Ref PublicSubnet2]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref EC2RootVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      SecurityGroupIds:
+        - !Ref DefectDojoSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+            - ""
+            - - |
+                #!/bin/bash
+                set -ex
+                export DEBIAN_FRONTEND=noninteractive
+
+                # Ubuntu can run unattended apt jobs on first boot; wait until locks are released.
+                while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+                  echo "Waiting for apt/dpkg lock..."
+                  sleep 5
+                done
+
+                apt-get -o Dpkg::Lock::Timeout=300 update
+                apt-get -o Dpkg::Lock::Timeout=300 install -y ca-certificates curl git
+                # Install Docker
+                install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+                chmod a+r /etc/apt/keyrings/docker.asc
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+                apt-get -o Dpkg::Lock::Timeout=300 update
+                apt-get -o Dpkg::Lock::Timeout=300 install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+                systemctl enable docker
+                systemctl start docker
+                git clone https://github.com/jcamilomolinar/django-DefectDojo /opt/django-DefectDojo
+                cd /opt/django-DefectDojo
+                git checkout trunk
+              - |
+                
+                # Set environment variables
+              - !Sub "export DD_CREDENTIAL_AES_256_KEY='${DDCredentialAES256Key}'\n"
+              - !Sub "export DD_SECRET_KEY='${DDSecretKey}'\n"
+              - !Sub "export DD_ADMIN_USER='${DDAdminUser}'\n"
+              - !Sub "export DD_ADMIN_PASSWORD='${DDAdminPassword}'\n"
+              - !Sub "export DD_DATABASE_HOST='"
+              - !GetAtt DefectDojoDB.Endpoint.Address
+              - "'\n"
+              - "export DD_DATABASE_PORT='5432'\n"
+              - !Sub "export DD_DATABASE_URL=\"postgres://${DDDatabaseAdmin}:${DDDatabasePassword}@"
+              - !GetAtt DefectDojoDB.Endpoint.Address
+              - ":5432/defectdojo\"\n"
+              - !Sub "export DD_LOGO_URL=\"https://${MicrofrontendDistribution.DomainName}/vultracker-logo.webp\"\n"
+              - !Sub "export DD_LOGO_URL_VS=\"https://${MicrofrontendDistribution.DomainName}/vulsolver.webp\"\n"
+              - !Sub "export DD_MF_FRONTEND_DEFECT_DOJO_URL=\"https://${MicrofrontendDistribution.DomainName}\"\n"
+              - !Sub "export DD_CORS_ALLOWED_ORIGINS=\"https://${MicrofrontendDistribution.DomainName}\"\n"
+              - !Sub "export DD_CSRF_TRUSTED_ORIGINS=\"https://${DefectDojoDistribution.DomainName},https://${MicrofrontendDistribution.DomainName}\"\n"
+              - |
+                
+                # Force writable HOME/cache for Django services (Azure DevOps SDK cache)
+                cat > docker-compose.override.yml << 'EOF'
+                services:
+                  uwsgi:
+                    environment:
+                      HOME: /tmp
+                      XDG_CACHE_HOME: /tmp/.cache
+                  celerybeat:
+                    environment:
+                      HOME: /tmp
+                      XDG_CACHE_HOME: /tmp/.cache
+                  celeryworker:
+                    environment:
+                      HOME: /tmp
+                      XDG_CACHE_HOME: /tmp/.cache
+                  initializer:
+                    environment:
+                      HOME: /tmp
+                      XDG_CACHE_HOME: /tmp/.cache
+                EOF
+
+                # Build images and run containers
+                docker compose build
+                docker compose up -d
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ec2"
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${AWS::StackName}-alb-sg"
+      GroupDescription: Security group for load balancer
+      VpcId: !Ref DefectDojoVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-alb"
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !GetAtt LoadBalancerSecurityGroup.GroupId
+
+  TargetGroupAttachment:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: instance
+      Targets:
+        - Id: !Ref DefectDojoEC2Instance
+          Port: 8080
+      Name: !Sub "${AWS::StackName}-tg"
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !Ref DefectDojoVPC
+      HealthCheckPath: /nginx_health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 8080
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroupAttachment
+
+  # ── Microfrontend S3 bucket ──────────────────────────────────────────────
+  MicrofrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "mf-${AWS::StackName}-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+
+  # ── CloudFront Origin Access Control (OAC) para el bucket ─────────────────
+  MicrofrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "oac-${AWS::StackName}-mf-bucket"
+        Description: OAC for microfrontend S3 bucket
+        SigningProtocol: sigv4
+        SigningBehavior: always
+        OriginAccessControlOriginType: s3
+
+  # ── CloudFront para el ALB de DefectDojo (proxy HTTPS) ────────────────────
+  DefectDojoDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: DefectDojo ALB HTTPS proxy
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: defectdojo-alb-origin
+            DomainName: !GetAtt LoadBalancer.DNSName
+            CustomOriginConfig:
+              HTTPPort: 8080
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+        DefaultCacheBehavior:
+          TargetOriginId: defectdojo-alb-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad       # CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+          Compress: true
+
+  # ── Response Headers Policy CORS (usada por el CF del microfrontend) ───────
+  MicrofrontendCorsResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${AWS::StackName}-mf-cors-policy"
+        Comment: CORS headers for microfrontend
+        CorsConfig:
+          AccessControlAllowOrigins:
+            Items:
+              - !Sub "http://${LoadBalancer.DNSName}:8080"
+              - !Sub "https://${DefectDojoDistribution.DomainName}"
+          AccessControlAllowHeaders:
+            Items:
+              - "*"
+          AccessControlAllowMethods:
+            Items:
+              - GET
+              - HEAD
+          AccessControlAllowCredentials: false
+          AccessControlMaxAgeSec: 3000
+          OriginOverride: true
+
+  # ── CloudFront Distribution para el bucket S3 (microfrontend) ────────────
+  MicrofrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Microfrontend static site
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponsePagePath: /index.html
+            ResponseCode: "200"
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponsePagePath: /index.html
+            ResponseCode: "200"
+            ErrorCachingMinTTL: 10
+        Origins:
+          - Id: mf-s3-origin
+            DomainName: !GetAtt MicrofrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt MicrofrontendOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: mf-s3-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6       # CachingOptimized
+          Compress: true
+
+  # ── Bucket Policy: permite acceso solo al OAC de CloudFront ──────────────
+  MicrofrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MicrofrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${MicrofrontendBucket}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${MicrofrontendDistribution}"
+
+Outputs:
+  LoadBalancerDNS:
+    Description: The DNS name of the load balancer
+    Value: !GetAtt LoadBalancer.DNSName
+
+  DefectDojoURL:
+    Description: URL HTTPS de DefectDojo via CloudFront
+    Value: !Sub "https://${DefectDojoDistribution.DomainName}"
+
+  MicrofrontendURL:
+    Description: URL HTTPS del microfrontend via CloudFront
+    Value: !Sub "https://${MicrofrontendDistribution.DomainName}"
+
+  MicrofrontendBucketName:
+    Description: Nombre del bucket S3 del microfrontend
+    Value: !Ref MicrofrontendBucket

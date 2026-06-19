@@ -1,0 +1,44 @@
+from rest_framework import serializers
+
+
+class IARecommendationSerializer(serializers.Serializer):
+    status = serializers.CharField(required=False)
+    data = serializers.JSONField()
+
+    def validate_data(self, value):
+        if "like_status" in value:
+            if (
+                value["like_status"] == True or
+                value["like_status"] == False
+            ):
+                return value
+        raise serializers.ValidationError("like_status requiered (false or true)")
+
+
+
+class RecommendationSerializer(serializers.Serializer):
+    like_status = serializers.BooleanField(required=False,
+                                           allow_null=True,
+                                           default=None)
+    recommendations = serializers.ListField(child=serializers.CharField())
+    mitigations = serializers.ListField(child=serializers.CharField())
+    files_to_fix = serializers.ListField(child=serializers.CharField())
+
+class FindingBulkUpdateSLAStartDateSerializer(serializers.Serializer):
+    tags = serializers.CharField(max_length=200)
+    priority_classification = serializers.CharField(
+        help_text="Comma-separated priority labels. Valid values: Unknown, Medium Low, High, Critical, Very Critical",
+    )
+    date = serializers.DateField()
+
+    VALID_PRIORITY_VALUES = {"Unknown", "Medium Low", "High", "Critical", "Very Critical"}
+
+    def validate_priority_classification(self, value):
+        priorities = [p.strip() for p in value.split(",") if p.strip()]
+        invalid = [p for p in priorities if p not in self.VALID_PRIORITY_VALUES]
+        if invalid:
+            raise serializers.ValidationError(
+                f"Invalid priority values: {invalid}. "
+                f"Valid values are: {sorted(self.VALID_PRIORITY_VALUES)}"
+            )
+        return value

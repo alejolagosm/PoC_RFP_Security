@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% load display_tags %}
+{% load static %}
+{% block content %}
+    {{ block.super }}
+
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="panel panel-default">
+            <div class="panel-heading tight">
+                    <h3 class="has-filters">
+                        Components
+                        <div class="dropdown pull-right">
+                            <button id="show-filters" aria-label="Filters" data-toggle="collapse" data-target="#the-filters" class="btn btn-primary toggle-filters"> <i class="fa-solid fa-filter"></i> <i class="caret"></i> </button>
+                        </div>
+                    </h3>
+            </div>
+            <div id="the-filters" class="is-filters panel-body collapse {% if filter.form.has_changed %}in{% endif %}">
+                {% include "dojo/filter_snippet.html" with form=filter.form %}
+            </div>
+        </div>
+        <div class="clearfix">
+            {% include "dojo/paging_snippet.html" with page=result page_size=True %}
+        </div>
+        <div class="panel panel-default table-responsive">
+            <table id="components" class="tablesorter-bootstrap table table-condensed table-striped">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Version</th>
+                        <th>Engagement Name</th>
+                        <th class="text-center">Active Findings</th>
+                        <th class="text-center">Closed Findings</th>
+                        <th class="text-center">Total Findings</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for result in result %}
+                    <tr>
+                        <td>
+                            {{ result.name }}
+                        </td>
+                        <td>{{ result.version }}</td>
+                        <td>
+                            <a href="{% url 'view_engagement' result.engagement.id %}" data-toggle="tooltip" data-placement="bottom"> 
+                             {{ result.engagement_name }}
+                            </a></td>
+                        <td class="text-center">
+                            {% if result.active_findings %}
+                                {{ result.active_findings }}
+                            {% else %}
+                            0
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if result.closed_findings %}
+                                {{ result.closed_findings }}
+                            {% else %}
+                            0
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if result.total_findings %}
+                            <a href="{% url 'product_all_findings' result.engagement.product.id %}?component_id={{ result.id }}">
+                                <b>{{ result.total_findings }}</b>
+                            </a>
+                            {% else %}
+                            0
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="clearfix">
+            {% include "dojo/paging_snippet.html" with page=result page_size=True %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block postscript %}
+    {{ block.super }}
+<script>
+        $(function () {
+            // Ensures dropdown has proper z-index
+            $('.table-responsive').on('show.bs.dropdown', function () {
+                $('.table-responsive').css("overflow", "inherit");
+            });
+
+            $('.table-responsive').on('hide.bs.dropdown', function () {
+                $('.table-responsive').css("overflow", "auto");
+            });
+
+            var availableTags = [
+                {% for word in component_words %}
+                    "{{word}}",
+                {% endfor %}
+            ];
+            $("#id_component_name").autocomplete({
+                source: availableTags
+            });
+        });
+</script>
+<script nonce="{{request.csp_nonce}}">
+    // DataTables setup with search, column visibility, and export options
+    $(document).ready(function () {
+        var date = new Date().toISOString().slice(0, 10);
+        var fileDated = 'Product_Components_' + date;
+        var buttonCommon = {
+            exportOptions: {
+                stripHtml: true,
+                stripNewlines: true,
+                trim: true,
+                orthogonal: 'export'
+            },
+            filename: fileDated,
+            title: 'Product Components'
+        };
+
+        // DataTables initialization
+        var dojoTable = $('#components').DataTable({
+            drawCallback: function () {
+                $('#components .has-popover').hover(
+                    function () { $(this).popover('show'); }, // hover
+                    function () { $(this).popover('hide'); } // unhover
+                );
+            },
+            "columns": [
+                { "data": "Component_name" },
+                { "data": "Version" },
+                { "data": "Engagement_name"},
+                { "data": "Active" },
+                { "data": "Closed" },
+                { "data": "Total" },
+            ],
+            order: [],  // Default order (can be customized)
+            columnDefs: [
+                {
+                    "orderable": false,  // Disable ordering for certain columns if necessary
+                },
+            ],
+            dom: 'Bfrtip',  // Layout for buttons and search input
+            paging: false,   // Enable pagination
+            searching: true, // Enable search feature
+            info: false, // Show table information
+            buttons: [
+                {
+                    extend: 'colvis',
+                    columns: ':not(.noVis)',  // Column visibility
+                },
+                $.extend(true, {}, buttonCommon, {
+                    extend: 'copy',
+                }),
+                $.extend(true, {}, buttonCommon, {
+                    extend: 'excel',
+                    autoFilter: true,
+                    sheetName: 'Exported data',
+                }),
+                $.extend(true, {}, buttonCommon, {
+                    extend: 'csv',
+                }),
+                $.extend(true, {}, buttonCommon, {
+                    extend: 'pdf',
+                    orientation: 'landscape',
+                    pageSize: 'LETTER',
+                }),
+                $.extend(true, {}, buttonCommon, {
+                    extend: 'print',
+                }),
+            ],
+        });
+    });
+</script>
+{% include "dojo/filter_js_snippet.html" %}
+{% endblock %}

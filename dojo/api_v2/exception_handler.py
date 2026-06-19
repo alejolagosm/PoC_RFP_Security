@@ -1,0 +1,77 @@
+import logging
+import traceback
+
+from django.core.exceptions import ValidationError
+from django.db.models.deletion import RestrictedError
+from rest_framework.exceptions import ParseError
+from dojo.api_v2.api_error import ApiError
+from rest_framework.response import Response
+from rest_framework.status import (
+    HTTP_400_BAD_REQUEST,
+    HTTP_409_CONFLICT,
+    HTTP_500_INTERNAL_SERVER_ERROR,
+)
+from rest_framework.views import exception_handler
+
+from dojo.models import System_Settings
+from dojo.product_announcements import ErrorPageProductAnnouncement
+
+logger = logging.getLogger(__name__)
+
+
+def custom_exception_handler(exc, context):
+    # Call REST framework's default exception handler first,
+    # to get the standard error response.
+    response = exception_handler(exc, context)
+
+    if isinstance(exc, ParseError) and "JSON parse error" in str(exc):
+        response = Response()
+        response.status_code = HTTP_400_BAD_REQUEST
+        response.data = {"message": "JSON request content is malformed"}
+    elif isinstance(exc, RestrictedError):
+        # An object cannot be deleted because it has dependent objects.
+        response = Response()
+        response.status_code = HTTP_409_CONFLICT
+        response.data = {}
+        response.data["message"] = str(exc)
+    elif isinstance(exc, ValidationError):
+        response = Response()
+        response.status_code = HTTP_400_BAD_REQUEST
+        response.data = {}
+        response.data["message"] = str(exc)
+        ErrorPageProductAnnouncement(response=response)
+    elif isinstance(exc, ApiError):
+        response = Response()
+        response.status_code = exc.code
+        response.data = {}
+        response.data["error"] = {
+            "code": exc.code,
+            "detail": str(exc.detail),
+            "message": str(exc.message)
+        }
+        response.data["message"] = str(exc.detail)
+    elif response is None:
+        exception_message = str(exc.args[0]) if exc.args else str(exc)
+        logger.error(exc, exc_info=True)  # noqa: LOG014
+        response = Response()
+        response.status_code = HTTP_500_INTERNAL_SERVER_ERROR
+        response.data = {}
+        response.data["message"] = exception_message
+        response.data["detail"] = traceback.format_exc()
+        ErrorPageProductAnnouncement(response=response)
+    elif response.status_code < 500:
+        # HTTP status codes lower than 500 are no technical errors.
+        # They need not to be logged and we provide the exception
+        # message, if it is different from the detail that is already
+        # in the response.
+        if isinstance(response.data, dict) and str(
+            exc,
+        ) != response.data.get("detail", ""):
+            response.data["message"] = str(exc)
+            ErrorPageProductAnnouncement(response=response)
+    else:
+        # HTTP status code 500 or higher are technical errors.
+        # They get logged and we don't change the response.
+        logger.error(exc, exc_info=True)  # noqa: LOG014
+
+    return response
