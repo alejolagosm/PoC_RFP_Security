@@ -1,0 +1,98 @@
+name: Security Scans
+on:
+  push:
+    branches:
+      - trunk
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: fluidattacks/sast-action@1.3.0
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+          scanner_mode: full
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sast-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1
+
+  sca-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: fluidattacks/sca-action@1.2.0
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+          scanner_mode: full
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sca-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1
+
+  dast-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: fluidattacks/dast-action@0.2.0
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dast-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1
+
+  container-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cs
+        run: curl -fsSL https://public.fluidattacks.com/cs/install.sh | sh
+
+      - name: Run container scan
+        run: cs scan --config .github/.cs-config.yaml
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: fluidattacks/ss-action@main
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+          scanner_mode: full
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: secret-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1

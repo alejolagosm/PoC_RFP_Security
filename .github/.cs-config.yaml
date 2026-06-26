@@ -1,0 +1,7 @@
+language: ES
+strict: True
+output:
+  file_path: fluidattacks-results.sarif
+  format: SARIF
+containers_sca:
+  images: []
