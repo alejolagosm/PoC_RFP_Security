@@ -1,0 +1,92 @@
+name: Security Scans
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: fluidattacks/sast-action@1.3.0
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+          scanner_mode: diff
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sast-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1
+
+  sca-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: fluidattacks/sca-action@1.2.0
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+          scanner_mode: diff
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sca-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1
+
+  dast-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: fluidattacks/dast-action@0.2.0
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dast-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: fluidattacks/ss-action@main
+        id: scan
+        with:
+          scan_config_path: .github/.fluidattacks.yaml
+          scanner_mode: diff
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: secret-results
+          path: fluidattacks-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        run: exit 1

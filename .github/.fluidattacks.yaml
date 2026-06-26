@@ -1,0 +1,19 @@
+language: ES
+strict: True
+output:
+  file_path: fluidattacks-results.sarif
+  format: SARIF
+ss:
+  include:
+    - .
+sca:
+  include:
+    - .
+sast:
+  include:
+    - .
+  exclude:
+    - dojo/db_migrations/
+dast:
+  urls:
+    - url: https://d2fut0y3msj4nj.cloudfront.net
