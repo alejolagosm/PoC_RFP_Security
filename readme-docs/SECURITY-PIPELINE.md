@@ -293,7 +293,7 @@ dast:
     - url: https://nueva-url-de-la-aplicacion.com
 ```
 
-### Excluir rutas del análisis
+### Excluir rutas del análisis (De ser necesario)
 
 Agregar entradas bajo la clave `exclude` del escáner correspondiente en `.github/.fluidattacks.yaml`:
 
